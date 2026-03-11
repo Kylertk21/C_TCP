@@ -51,6 +51,22 @@ int main(void) {
   }
 
   printf("TAP device created: %s (fd=%d)\n", dev, fd);
+
+  unsigned char buf[1500];
+  while (1) {
+    int nread = read(fd, buf, sizeof(buf));
+    if (nread < 0) {
+      perror("read");
+      break;
+    }
+
+    printf("Frame: %d bytes | src: %02x:%02x:%02x:%02x:%02x:%02x"
+           " -> dst: %02x:%02x:%02x:%02x:%02x:%02x\n",
+           nread, buf[6], buf[7], buf[8], buf[9], buf[10],
+           buf[11],                                         // source MAC
+           buf[0], buf[1], buf[2], buf[3], buf[4], buf[5]); // dest MAC
+  }
+
   close(fd);
   return 0;
 }

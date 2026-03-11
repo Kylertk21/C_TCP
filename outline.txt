@@ -67,3 +67,114 @@ TUN/TAP instantiation:
     }
 
 
+    int main(void) {
+      char dev[IFNAMSIZ] = "test"; // writable buffer on the stack
+      int fd = tun_alloc(dev);
+      if (fd < 0) {
+        fprintf(stderr, "Failed to allocate TAP device\n");
+        return 1;
+      }
+
+      if (ioctl(fd, TUNSETPERSIST, 1) < 0) { // set interface to persist
+        perror("ERR: Could not set persistent");
+        close(fd);
+        return 1;
+      }
+
+      printf("TAP device created: %s (fd=%d)\n", dev, fd);
+      close(fd);
+      return 0;
+
+    }
+
+## Ethernet Frame Format
+
+frame header declaration:
+
+    #include <if_ether.h> // maps ethertypes and hex values
+
+    struct eth_hdr {
+        unsigned char dmac[6]; // destination mac address
+        unsigned char smac[6]; // source mac address
+        uint16_t ethertype; // 2 octet, indicates either length or payload type
+                            // > 1536 = type of payload
+        unsigned char payload[]; // pointer to eth frame's payload
+                                 // contains ARP / IPv4 packet this time
+                                 // Pad bytes are appended if < 48 bytes
+    } __attribute__((packed)); // instruct GCC to not optimize memory layout
+
+    struct eth_hdr *hdr = (struct eth_hdr *) buf;
+    // need packed for this type of declaration
+    // can also serialize protocol data manually if padding bytes
+    // are needed
+
+
+### Parsing and Handling Ethernet frames
+
+    int tun_read(int fd, char *buf, int len) { // tun_read wrapper
+        return read(fd, buf, len);
+    }
+    
+
+    if (tun_read(buf, BUFLEN) < 0) { // 
+        print_error("ERR: Read from tun_fd: %s\n", strerror(errno));
+    }
+
+    struct eth_hdr *hdr = init_eth_hdr(buf);
+
+    handle_frame(&netdev, hdr); // looks at ethertype field of header and
+                                // decides next action based on value
+
+
+### Address Resolution Protocol
+
+dynamically maps 48-bit ethernet address (MAC address) to a protocol address
+(IPv4 address). Several layer 3 protocols can be used like IPv4 or CHAOS
+Used to broadcast and query network for a service
+
+    struct arp_hdr {
+        uint16_t hwtype; // 2 octet, determines link layer type, eth in this case, 90x0001
+        uint16_t protype; // indicates protocol type , IPv4 in this case, 0x0800
+        unsigned char hwsize; // 1 octet, contain size of hardware
+        unsigned char prosize; // and protocol fields, 6B for MAC, 4B for IP
+        uint16_t opcode; // type of ARM message, request (1) / reply (2) / RARP request (3) / RARP reply (4)
+        unsigned char data[]; // payload of ARP message, IPv4 info below in this case
+    } __attribute((packed));
+
+
+    struct arp_ipv4 {
+        unsigned char smac[6];
+        uint32_t sip; // sender IP address
+        unsigned char dmac[6];
+        uint32_t dip; // receiver IP address
+    } __attribute__((packed));
+
+
+#### Address Resolution Algorithm
+
+?Do I have the hardware type in ar$hrd?
+Yes: (almost definitely)
+  [optionally check the hardware length ar$hln]
+  ?Do I speak the protocol in ar$pro?
+  Yes:
+    [optionally check the protocol length ar$pln]
+    Merge_flag := false
+    If the pair <protocol type, sender protocol address> is
+        already in my translation table, update the sender
+        hardware address field of the entry with the new
+        information in the packet and set Merge_flag to true.
+    ?Am I the target protocol address?
+    Yes:
+      If Merge_flag is false, add the triplet <protocol type,
+          sender protocol address, sender hardware address> to
+          the translation table.
+      ?Is the opcode ares_op$REQUEST?  (NOW look at the opcode!!)
+      Yes:
+        Swap hardware and protocol fields, putting the local
+            hardware and protocol addresses in the sender fields.
+        Set the ar$op field to ares_op$REPLY
+        Send the packet to the (new) target hardware address on
+            the same hardware on which the request was received.
+
+
+

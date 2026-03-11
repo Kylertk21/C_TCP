@@ -1,0 +1,69 @@
+# TCP/IP Stack written from scratch in C
+
+TCP header parsing, state machine, congestion control, retransmission timeout
+
+## TUN/TAP Devices
+
+TAP devices are used to intercept low-level network traffic from the linux kernel.
+They are special character devices that act as the factory for creating TUN/TAP interfaces.
+TUN/TAP devices are used by networking userspace applications to manipulate L3/L2 traffic.
+TAP devices are layer 2 (ethernet frames with MAC headers), 
+TUN devices are layer 3 (IP packets, no ethernet header)
+Common example is tunneling, where a packet is wrapped inside the payload of another packet.
+
+TUN/TAP instantiation:
+
+    int tun_alloc(char *dev) {
+        /* Takes a desired interface name, returns an fd
+         * than can send and receive packets, if dev is empty,
+         * kernel picks a name
+         */
+       
+        struct ifreq ifr; // standard linux struct for passing
+                          // interface config to kernel via ioctl
+        int fd, err;
+
+        if (( fd = open("/dev/net/tap", O_RDWR)) < 0) { // open tun/tap interface, 
+                                                        // gives generic handle
+            perror("Cannot open TUN/TAP dev");
+            exit(1);
+        }
+
+        CLEAR(ifr); // Zero out struct
+
+            /* Flags: IFF_TUN   - TUN device (no Ethernet headers)
+             *        IFF_TAP   - TAP device
+             *
+             *        IFF_NO_PI - Do not provide packet information (4-byte)
+             */
+
+        ifr.ifr_flags = IFF_TAP | IFF_NO_PI;
+        if ( *dev ) { // Check if first character isnt null (string is full)
+            strncpy(ifr.ifr_name, dev, IFNAMSIZ); // Assign 16, max interface name length
+        }
+
+        if ( (err = ioctl(fd, TUNSETIFF, (void *) &ifr)) < 0) {
+        /* Actually create the interface, ioctl sends a command to the kernel
+         * through the file descriptor. TUNSETIFF tell TUN/TAP driver to bind
+         * fd to a specific interface with the config in ifr
+         */
+            perror("ERR: Could not ioctl tun: %s\n", strerror(errno));
+            close(fd);
+            return err;
+        }
+
+        /* New network interface tap0 will appear on the system, visible via ip link
+         * any data written to fd appears as incoming packets on that interface
+         * any packets sent out through that interface can be read from fd
+         */
+
+        strcpy(dev, ifr.ifr_name);
+        return fd;
+        
+        /* kernel fills ifr.ifr_name with actual assigned name, writes back to 
+         * caller's dev buffer and returns the file descriptor
+         */
+
+    }
+
+
